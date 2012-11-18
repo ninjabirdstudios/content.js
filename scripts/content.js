@@ -89,6 +89,11 @@ var ContentJS = (function (exports)
         ERROR          : 3
     };
 
+    /// GlobalScope will be window for the UI thread, and a worker context
+    /// for web workers. We need this because we can't use 'window' from
+    /// a web worker.
+    var GlobalScope    = this;
+
     /// Polyfills for the underlying storage APIs.
     var StorageAPI     = {
         /// The resolved version of window.indexedDB (for IndexedDB.)
@@ -103,20 +108,20 @@ var ContentJS = (function (exports)
 
     StorageAPI.indexedDB = (function ()
         {
-            return  window.indexedDB              ||
-                    window.oIndexedDB             ||
-                    window.msIndexedDB            ||
-                    window.mozIndexedDB           ||
-                    window.webkitIndexedDB;
+            return  GlobalScope.indexedDB              ||
+                    GlobalScope.oIndexedDB             ||
+                    GlobalScope.msIndexedDB            ||
+                    GlobalScope.mozIndexedDB           ||
+                    GlobalScope.webkitIndexedDB;
         })();
 
     StorageAPI.IDBTransaction = (function ()
         {
-            return  window.IDBTransaction         ||
-                    window.oIDBTransaction        ||
-                    window.msIDBTransaction       ||
-                    window.mozIDBTransaction      ||
-                    window.webkitIDBTransaction;
+            return  GlobalScope.IDBTransaction         ||
+                    GlobalScope.oIDBTransaction        ||
+                    GlobalScope.msIDBTransaction       ||
+                    GlobalScope.mozIDBTransaction      ||
+                    GlobalScope.webkitIDBTransaction;
         })();
 
     StorageAPI.READ_ONLY  = StorageAPI.IDBTransaction.READ_ONLY  || 'readonly';
@@ -388,7 +393,7 @@ var ContentJS = (function (exports)
     {
         var o        = offset;
         var rs       = this.readString;
-        var rn       = this.readOctal;
+        var ro       = this.readOctal;
         var e        = new TarEntry();
         e.metaOffset = offset;
         e.dataOffset = offset + TarArchive.HEADER_SIZE;
@@ -539,7 +544,7 @@ var ContentJS = (function (exports)
     TarArchive.prototype.dataAsInt16Array = function (entry)
     {
         var offset = this.view.byteOffset + entry.dataOffset;
-        return new Int16Array(this.buffer,  offset, entry.size);
+        return new Int16Array(this.buffer,  offset, entry.size / 2);
     }
 
     /// Retrieves a Uint16Array view of the data associated with an entry.
@@ -548,7 +553,7 @@ var ContentJS = (function (exports)
     TarArchive.prototype.dataAsUint16Array = function (entry)
     {
         var offset = this.view.byteOffset + entry.dataOffset;
-        return new Uint16Array(this.buffer, offset, entry.size);
+        return new Uint16Array(this.buffer, offset, entry.size / 2);
     };
 
     /// Retrieves an Int32Array view of the data associated with an entry.
@@ -557,7 +562,7 @@ var ContentJS = (function (exports)
     TarArchive.prototype.dataAsInt32Array = function (entry)
     {
         var offset = this.view.byteOffset + entry.dataOffset;
-        return new Int32Array(this.buffer,  offset, entry.size);
+        return new Int32Array(this.buffer,  offset, entry.size / 4);
     }
 
     /// Retrieves a Uint32Array view of the data associated with an entry.
@@ -566,7 +571,7 @@ var ContentJS = (function (exports)
     TarArchive.prototype.dataAsUint32Array = function (entry)
     {
         var offset = this.view.byteOffset + entry.dataOffset;
-        return new Uint32Array(this.buffer, offset, entry.size);
+        return new Uint32Array(this.buffer, offset, entry.size / 4);
     };
 
     /// Retrieves a Float32Array view of the data associated with an entry.
@@ -575,7 +580,7 @@ var ContentJS = (function (exports)
     TarArchive.prototype.dataAsFloat32Array = function (entry)
     {
         var offset = this.view.byteOffset  + entry.dataOffset;
-        return new Float32Array(this.buffer, offset, entry.size);
+        return new Float32Array(this.buffer, offset, entry.size / 4);
     }
 
     /// Retrieves a Float64Array view of the data associated with an entry.
@@ -584,7 +589,7 @@ var ContentJS = (function (exports)
     TarArchive.prototype.dataAsFloat64Array = function (entry)
     {
         var offset = this.view.byteOffset  + entry.dataOffset;
-        return new Float64Array(this.buffer, offset, entry.size);
+        return new Float64Array(this.buffer, offset, entry.size / 8);
     };
 
     /// Constructor function for an object representing a set of content.
@@ -919,7 +924,8 @@ var ContentJS = (function (exports)
         }
         this.dataStores       = {};   // name => DataStore
         this.contentServers   = [];   // set of registered content server URLs
-        this.addServer('');           // add a server representing our origin
+        // @note: don't automatically add the server representing our origin.
+        // doing so won't work correctly from a web worker.
         return this;
     };
     Emitter.mixin(ContentServer);
@@ -1190,10 +1196,10 @@ var ContentJS = (function (exports)
         switch (data.id)
         {
             case IDs.ADD_SERVER:
-                this.addServer(data.url);
+                this.addContentServer(data.url);
                 break;
             case IDs.REMOVE_SERVER:
-                this.removeServer(data.url);
+                this.removeContentServer(data.url);
                 break;
             case IDs.OPEN_CACHE:
                 this.createDataStore(data.name);
@@ -1502,7 +1508,6 @@ var ContentJS = (function (exports)
         {
             return new Content();
         }
-        this.metadata = metadata;
         return this;
     };
 
@@ -1540,7 +1545,7 @@ var ContentJS = (function (exports)
         var entry = archive.getEntryByName(filename);
         if (entry)
         {
-            var chars = archive.dataAsUint16Array(entry);
+            var chars = archive.dataAsUint8Array(entry);
             var json  = String.fromCharCode.apply(null, chars);
             return JSON.parse(json);
         }
@@ -1626,8 +1631,8 @@ var ContentJS = (function (exports)
     /// @return A reference to the ContentLoader instance.
     ContentLoader.prototype.openCache = function (cacheName)
     {
-        this.applicationName      = this.applicationName || cacheName;
-        this.server.createDataStore(this.applicationName);
+        this.applicationName= this.applicationName || cacheName;
+        this.server.openCache(this.applicationName);
         return this;
     };
 
@@ -1638,7 +1643,7 @@ var ContentJS = (function (exports)
     ContentLoader.prototype.deleteCache = function (cacheName)
     {
         cacheName = cacheName || this.applicationName;
-        this.server.deleteDataStore(cacheName);
+        this.server.deleteCache(cacheName);
         return this;
     };
 
@@ -1649,7 +1654,7 @@ var ContentJS = (function (exports)
     /// @return A reference to the ContentLoader instance.
     ContentLoader.prototype.addServer = function (url)
     {
-        this.server.addContentServer(url);
+        this.server.addServer(url);
         return this;
     };
 
@@ -1659,7 +1664,7 @@ var ContentJS = (function (exports)
     /// @return A reference to the ContentLoader instance.
     ContentLoader.prototype.removeServer = function (url)
     {
-        this.server.removeContentServer(url);
+        this.server.removeServer(url);
         return this;
     };
 
@@ -1677,8 +1682,8 @@ var ContentJS = (function (exports)
             requestId    :'manifest',
             cacheName    : this.applicationName,
             resourceName : this.applicationName + '.manifest',
-            responseType :'json',
-            returnCached : isOffline
+            responseType :'text',
+            returnCached :(isOffline ? true : false)
         });
         return this;
     };
@@ -1863,7 +1868,8 @@ var ContentJS = (function (exports)
                 context      : context,
                 metadata     : metadata,
                 groupName    : bundle.groupName,
-                contentSet   : bundle.contentSet
+                contentSet   : bundle.contentSet,
+                packageName  : bundle.friendlyName
             });
             bundle.unpackIndex++;
         }
@@ -1871,6 +1877,7 @@ var ContentJS = (function (exports)
         {
             this.emit('group:error', {
                 loader      : this,
+                error       : error,
                 archive     : archive,
                 context     : context,
                 metadata    : bundle.metadata,
@@ -1928,6 +1935,12 @@ var ContentJS = (function (exports)
         this.manifest    = manifest;
         this.packages    = packages;
         this.versionData = version;
+        this.emit('manifest:loaded', {
+            loader       : this,
+            manifest     : manifest,
+            version      : version,
+            packages     : bundles
+        });
         return this;
     };
 
@@ -1957,6 +1970,8 @@ var ContentJS = (function (exports)
             // technically the client can request that additional caches be
             // opened; we only want to load the application manifest when the
             // application cache is ready.
+            // @todo: shouldn't use navigator.onLine here. instead, have the
+            // user pass in whether or not the app is operating in offline mode.
             this.loadApplicationManifest(navigator.onLine);
         }
     };
@@ -1975,7 +1990,12 @@ var ContentJS = (function (exports)
             if (bundle !== undefined)
             {
                 bundle.progress = data.progress;
-                this.emit('download:progress', this, bundle);
+                this.emit('download:progress', {
+                    loader      : this,
+                    resourceName: data.requestId,
+                    packageName : bundle.friendlyName,
+                    progress    : data.progress
+                });
             }
         }
     };
@@ -2012,7 +2032,7 @@ var ContentJS = (function (exports)
     /// @param args.applicationName A string specifying the application name.
     /// This value is used to resolve the application manifest file.
     /// @param args.platformName A string specifying the name of the current
-    /// runtime platform. Defaults to an empty string.
+    /// runtime platform. Defaults to 'generic'.
     /// @param args.version A string specifying the version of application
     /// content to load. Defaults to the string 'latest'.
     /// @param args.background A boolean value indicating whether resource
@@ -2025,7 +2045,7 @@ var ContentJS = (function (exports)
     {
         args                   = args || {};
         args.applicationName   = defaultValue(args.applicationName, 'default');
-        args.platformName      = defaultValue(args.platformName,    '');
+        args.platformName      = defaultValue(args.platformName,    'generic');
         args.version           = defaultValue(args.version,         'latest');
         args.background        = defaultValue(args.background,       true);
         args.servers           = defaultValue(args.servers,          []);
@@ -2041,80 +2061,14 @@ var ContentJS = (function (exports)
         return loader;
     }
 
-    /// 01. Create ContentLoader 'loader' that runs on the UI thread.
-    ///     var loader = ContentJS.createLoader({
-    ///         application       : 'foo',
-    ///         platform          : 'ps3',
-    ///         version           : 'latest',
-    ///         background        :  true,
-    ///         servers           : [
-    ///             'https://foo.bar.com/content',
-    ///             'https://foo.car.com/content'
-    ///         ]
-    ///     });
-    /// 02. Subscribe to events. Note that there's no 'progress' event. Instead
-    ///     the client will want to poll for the progress of each package.
-    ///     loader.on('error', onContentLoaderError(loader, error));
-    /// 03. Reload the application manifest with:
-    ///     loader.loadApplicationManifest();
-    /// 04. [Internal] Once the manifest has finished downloading:
-    ///     Reset the progress for all packages to zero.
-    ///     Parse the application manifest file.
-    ///     Emit a 'manifest:loaded' event.
-    /// 05. Once the application manifest has been loaded ('manifest:loaded')
-    ///     the client can request that groups of packages be loaded:
-    ///     loader.loadPackage(name, set)
-    ///     loader.loadPackageGroup(groupName, set, [
-    ///         'core',
-    ///         'preload',
-    ///         'level01'
-    ///     ]);
-    /// 06. [Internal] Each one of the package names gets queued for download.
-    ///     The ContentServer will report 'progress' and 'resource' events.
-    ///     The 'progress' event should update the package status and emit a
-    ///     'package:progress' event so the client can poll download status.
-    ///     The 'resource' event should add the data to a queue and trigger the
-    ///     unpack process (if it's not already in-progress.) Unpacking is done
-    ///     one package at a time. Should also emit a 'package:download' event
-    ///     that specifies the group name and the package name.
-    /// 07. Unpacking consists of loading the package.manifest entry within the
-    ///     archive file, and then for each resource within the package:
-    ///     - Create an internal record to represent it. Load state, etc. can
-    ///       be tracked here. Metadata is available as manifest.resources[i]
-    ///       with fields name, type, tags[], data[].
-    ///     - Pass it off to the registered handler for the resource type,
-    ///       probably via an event, like so:
-    ///       loader.on('atlas', function (metadata, archive, content, context)
-    ///           {
-    ///               var resourceName = metadata.name;
-    ///               var atlasFile    = Content.fileWithExtension('atlas', metadata);
-    ///               var imageFile    = Content.fileWithExtension('image', metadata);
-    ///               var atlasData    = Content.loadObject(atlasFile, archive);
-    ///               var imageData    = Content.loadPixels(imageFile, archive);
-    ///               var video        = Content.loadVideo(...);
-    ///               var audio        = Content.loadAudio(...);
-    ///               var canvas       = Content.loadCanvas(...);
-    ///               content.loaded   = true;
-    ///               content.runtime  = {
-    ///                   atlas        : atlasData,
-    ///                   texture      : context.createTexture(image)
-    ///               };
-    ///           });
-    ///     - Emit a 'resource:loaded' event.
-    ///     - Decrement the number of pending resources.
-    /// 08. When all packages in a group have been unpacked, the ContentSet
-    ///     should emit a 'complete' event to indicate that it is ready for use.
-    ///     Client code should store resource references as handles
-    /// 09. All of this should work in a time-slice fashion, where the
-    ///     loader.update() function is called once per-frame and takes up
-    ///     approximately the requested amount of time, or less.
-    /// 10. SEE http://www.html5rocks.com/en/tutorials/webgl/typed_arrays/
-
     /// Specify the data and functions exported from the module.
-    exports.ClientCommand = ClientCommand;
-    exports.ServerCommand = ServerCommand;
-    exports.ContentServer = ContentServer;
-    exports.createLoader  = createContentLoader;
+    exports.ClientCommand     = ClientCommand;
+    exports.ServerCommand     = ServerCommand;
+    exports.ContentServer     = ContentServer;
+    exports.createLoader      = createContentLoader;
+    exports.fileWithExtension = Content.fileWithExtension;
+    exports.loadObject        = Content.loadObject;
+    exports.loadCanvas        = Content.loadCanvas;
     exports.scriptPath    = '';
     return exports;
 }(ContentJS || {}));
