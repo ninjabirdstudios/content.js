@@ -340,8 +340,9 @@ var ContentJS = (function (exports)
     /// @param dataSize The size of the previous entry, in bytes.
     TarArchive.prototype.nextHeaderOffset = function (dataOffset, dataSize)
     {
-        var ss = Math.ceil(dataSize >> TarArchive.BLOCK_SHIFT);
-        return dataOffset + ss * TarArchive.BLOCK_SIZE;
+        var bs = TarArchive.BLOCK_SIZE;
+        var ss = Math.ceil(dataSize / bs);
+        return dataOffset + ss * bs;
     };
 
     /// Reads @a length ASCII characters (each one byte) from the buffer
@@ -1527,10 +1528,20 @@ var ContentJS = (function (exports)
         var fileCount = metadata.data.length;
         for (var i    = startIndex || 0; i < fileCount; ++i)
         {
-            var lastP = filenames[i].lastIndexOf(separator);
-            var ext   = filenames[i].substr(lastP + 1);
-            if (ext === extension)
-                return filenames[i];
+            var lastP  = filenames[i].lastIndexOf(separator);
+            if (lastP >= 0)
+            {
+                // this filename has an extension component.
+                var ext   = filenames[i].substr(lastP + 1);
+                if (ext === extension)
+                    return filenames[i];
+            }
+            else
+            {
+                // this filename does not have an extension.
+                if (null === extension || 0 === extension.length)
+                    return filenames[i];
+            }
         }
         // else, returns undefined.
     };
@@ -1572,6 +1583,18 @@ var ContentJS = (function (exports)
             context.putImageData(imageData, 0, 0);
         }
         return canvas;
+    };
+
+    /// Loads data from an entry of raw bytes and returns it as a new
+    /// Uint8Array ArrayBufferView.
+    /// @param filename The filename corresponding to the archive entry.
+    /// @param archive An instance of the TarArchive type.
+    /// @return A new Uint8Array view of the specified file.
+    Content.loadBytes = function (filename, archive)
+    {
+        var entry = archive.getEntryByName(filename);
+        if (entry)  return archive.dataAsUint8Array(entry);
+        else        return null;
     };
 
     /// Constructor function for the ContentLoader type, which maintains global
@@ -2069,6 +2092,7 @@ var ContentJS = (function (exports)
     exports.fileWithExtension = Content.fileWithExtension;
     exports.loadObject        = Content.loadObject;
     exports.loadCanvas        = Content.loadCanvas;
+    exports.loadBytes         = Content.loadBytes;
     exports.scriptPath    = '';
     return exports;
 }(ContentJS || {}));
